@@ -108,8 +108,14 @@ def test_internet_access(config):
     """
     log.info("=== TEST: Internet Access ===")
     deployment_mode = config["deployment_mode"]
-    expect_internet = deployment_mode != "compliant"
+    is_lambda = bool(os.environ.get("AWS_LAMBDA_RUNTIME_API"))
+    # Lambda in VPC has no internet in basic mode (no public IP, no NAT)
+    if is_lambda and deployment_mode == "basic":
+        expect_internet = False
+    else:
+        expect_internet = deployment_mode != "compliant"
     log.info("  Deployment mode: %s", deployment_mode or "(not set)")
+    log.info("  Runtime: %s", "Lambda" if is_lambda else "ECS/Local")
     if deployment_mode:
         log.info("  Internet expected: %s", expect_internet)
 
