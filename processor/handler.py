@@ -6,7 +6,7 @@ then runs the same processing logic as ECS mode.
 import os
 import logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", force=True)
 log = logging.getLogger("processor-test")
 
 
