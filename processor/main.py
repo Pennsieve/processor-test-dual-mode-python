@@ -33,6 +33,7 @@ def get_config():
     output_dir = os.environ.get("OUTPUT_DIR", "")
     integration_id = os.environ.get("INTEGRATION_ID", "unknown")
     session_token = os.environ.get("SESSION_TOKEN", "")
+    refresh_token = os.environ.get("REFRESH_TOKEN", "")
     api_host = os.environ.get("PENNSIEVE_API_HOST", "")
     api_host2 = os.environ.get("PENNSIEVE_API_HOST2", "")
     environment = os.environ.get("ENVIRONMENT", "unknown")
@@ -44,6 +45,7 @@ def get_config():
         "output_dir": output_dir,
         "integration_id": integration_id,
         "session_token": session_token,
+        "refresh_token": refresh_token,
         "api_host": api_host,
         "api_host2": api_host2,
         "environment": environment,
@@ -59,7 +61,7 @@ def test_env_vars(config):
     for key, value in config.items():
         present = bool(value)
         status = "PASS" if present else "WARN"
-        display = value if key != "session_token" else ("***" if value else "(empty)")
+        display = value if key not in ("session_token", "refresh_token") else ("***" if value else "(empty)")
         log.info("  %s: %s = %s", status, key, display)
         results.append((key, present))
     return results
@@ -156,6 +158,100 @@ def test_internet_access(config):
     return dns_ok, http_ok, valid
 
 
+def test_authenticated_api(config):
+    """Test that SESSION_TOKEN is valid by calling the Pennsieve user endpoint.
+
+    If REFRESH_TOKEN is available and the session token is expired, attempt
+    a token refresh via Cognito (mirrors the orchestration Lambda pattern).
+    """
+    log.info("=== TEST: Authenticated API Access ===")
+    session_token = config["session_token"]
+    refresh_token = config["refresh_token"]
+    api_host = config["api_host"]
+
+    if not session_token:
+        log.warning("  SESSION_TOKEN not set, skipping authenticated API test")
+        return None
+    if not api_host:
+        log.warning("  PENNSIEVE_API_HOST not set, skipping authenticated API test")
+        return None
+
+    # Try calling GET /user with the session token
+    user_url = f"{api_host}/user"
+    try:
+        resp = requests.get(user_url, headers={"Authorization": f"Bearer {session_token}"}, timeout=10)
+    except requests.RequestException as e:
+        log.info("  API request failed (network): %s", e)
+        log.info("  This is expected if the processor has no internet access (compliant mode)")
+        return None
+
+    if resp.status_code == 200:
+        user = resp.json()
+        log.info("  PASS: authenticated as %s (id: %s)", user.get("email", "?"), user.get("id", "?"))
+        return True
+
+    if resp.status_code == 401 and refresh_token:
+        log.info("  Session token expired (401), attempting refresh...")
+        new_token = _refresh_session(config)
+        if new_token:
+            resp2 = requests.get(user_url, headers={"Authorization": f"Bearer {new_token}"}, timeout=10)
+            if resp2.status_code == 200:
+                user = resp2.json()
+                log.info("  PASS: authenticated after refresh as %s (id: %s)", user.get("email", "?"), user.get("id", "?"))
+                return True
+            log.error("  FAIL: still got %d after token refresh", resp2.status_code)
+            return False
+        log.error("  FAIL: token refresh failed")
+        return False
+
+    log.error("  FAIL: API returned status %d", resp.status_code)
+    return False
+
+
+def _refresh_session(config):
+    """Refresh the session token via the Pennsieve Cognito config endpoint."""
+    api_host = config["api_host"]
+    refresh_token = config["refresh_token"]
+
+    try:
+        # Fetch Cognito config from public endpoint
+        resp = requests.get(f"{api_host}/authentication/cognito-config", timeout=10)
+        if resp.status_code != 200:
+            log.error("  Failed to fetch cognito config: %d", resp.status_code)
+            return None
+        cognito_config = resp.json()
+        app_client_id = cognito_config.get("tokenPool", {}).get("appClientId")
+        region = cognito_config.get("tokenPool", {}).get("region", "us-east-1")
+        if not app_client_id:
+            log.error("  No appClientId in cognito config")
+            return None
+
+        # Call Cognito InitiateAuth via HTTP (avoids boto3 dependency)
+        import json
+        cognito_url = f"https://cognito-idp.{region}.amazonaws.com/"
+        headers = {
+            "Content-Type": "application/x-amz-json-1.1",
+            "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth",
+        }
+        body = json.dumps({
+            "AuthFlow": "REFRESH_TOKEN_AUTH",
+            "ClientId": app_client_id,
+            "AuthParameters": {"REFRESH_TOKEN": refresh_token},
+        })
+        resp = requests.post(cognito_url, headers=headers, data=body, timeout=15)
+        if resp.status_code != 200:
+            log.error("  Cognito refresh failed: %d %s", resp.status_code, resp.text[:200])
+            return None
+        result = resp.json()
+        new_token = result.get("AuthenticationResult", {}).get("AccessToken")
+        if new_token:
+            log.info("  Token refresh succeeded")
+        return new_token
+    except Exception as e:
+        log.error("  Token refresh error: %s", e)
+        return None
+
+
 def test_symlink_creation(config):
     """
     Create uniquely-named symlinks in OUTPUT_DIR for each file in INPUT_DIR.
@@ -218,6 +314,7 @@ def run():
     env_results = test_env_vars(config)
     input_ok, output_ok = test_directories(config)
     dns_ok, http_ok, internet_valid = test_internet_access(config)
+    auth_result = test_authenticated_api(config)
     symlinks = test_symlink_creation(config)
 
     # Summary
@@ -231,6 +328,7 @@ def run():
     log.info("  DNS resolution: %s", dns_ok)
     log.info("  HTTP connectivity: %s", http_ok)
     log.info("  Internet validation: %s", "PASS" if internet_valid else "FAIL")
+    log.info("  Authenticated API: %s", {True: "PASS", False: "FAIL", None: "SKIP"}.get(auth_result, "UNKNOWN"))
     log.info("  Symlinks created: %d", len(symlinks))
     log.info("  Elapsed: %.2fs", elapsed)
     log.info("=" * 60)
@@ -241,6 +339,10 @@ def run():
 
     if not internet_valid:
         log.error("CRITICAL: internet access does not match deployment mode '%s'", config["deployment_mode"])
+        sys.exit(1)
+
+    if auth_result is False:
+        log.error("CRITICAL: authenticated API test failed")
         sys.exit(1)
 
     log.info("All tests completed successfully")

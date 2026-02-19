@@ -25,6 +25,7 @@ def handler(event, context):
     os.environ["OUTPUT_DIR"] = event.get("outputDir", "")
     os.environ["INTEGRATION_ID"] = event.get("integrationId", "")
     os.environ["SESSION_TOKEN"] = event.get("sessionToken", "")
+    os.environ["REFRESH_TOKEN"] = event.get("refreshToken", "")
 
     # Run the same logic as ECS mode
     from processor.main import run
