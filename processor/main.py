@@ -122,19 +122,23 @@ def test_internet_access(config):
     if deployment_mode:
         log.info("  Internet expected: %s", expect_internet)
 
-    # DNS resolution
+    # DNS resolution (short timeout to fail fast)
     dns_ok = False
+    old_timeout = socket.getdefaulttimeout()
     try:
+        socket.setdefaulttimeout(2)
         addr = socket.getaddrinfo("api.pennsieve.net", 443, socket.AF_INET)
         dns_ok = True
         log.info("  DNS resolution: PASS (api.pennsieve.net -> %s)", addr[0][4][0])
-    except socket.gaierror as e:
+    except (socket.gaierror, socket.timeout, OSError) as e:
         log.info("  DNS resolution: FAIL (%s)", e)
+    finally:
+        socket.setdefaulttimeout(old_timeout)
 
-    # HTTP request
+    # HTTP request (short timeout to fail fast)
     http_ok = False
     try:
-        resp = requests.get("https://api.pennsieve.net/health", timeout=5)
+        resp = requests.get("https://api.pennsieve.net/health", timeout=2)
         http_ok = resp.status_code < 500
         log.info("  HTTP request: PASS (status %d)", resp.status_code)
     except requests.RequestException as e:
