@@ -135,10 +135,12 @@ def test_internet_access(config):
     finally:
         socket.setdefaulttimeout(old_timeout)
 
-    # HTTP request (short timeout to fail fast)
+    # HTTP request (short timeout, no retries to fail fast)
     http_ok = False
     try:
-        resp = requests.get("https://api.pennsieve.net/health", timeout=2)
+        sess = requests.Session()
+        sess.mount("https://", requests.adapters.HTTPAdapter(max_retries=0))
+        resp = sess.get("https://api.pennsieve.net/health", timeout=2)
         http_ok = resp.status_code < 500
         log.info("  HTTP request: PASS (status %d)", resp.status_code)
     except requests.RequestException as e:
@@ -180,10 +182,12 @@ def test_authenticated_api(config):
         log.warning("  PENNSIEVE_API_HOST not set, skipping authenticated API test")
         return None
 
-    # Try calling GET /user with the session token
+    # Try calling GET /user with the session token (no retries to fail fast)
     user_url = f"{api_host}/user"
+    sess = requests.Session()
+    sess.mount("https://", requests.adapters.HTTPAdapter(max_retries=0))
     try:
-        resp = requests.get(user_url, headers={"Authorization": f"Bearer {session_token}"}, timeout=10)
+        resp = sess.get(user_url, headers={"Authorization": f"Bearer {session_token}"}, timeout=5)
     except requests.RequestException as e:
         log.info("  API request failed (network): %s", e)
         log.info("  This is expected if the processor has no internet access (compliant mode)")
@@ -198,7 +202,7 @@ def test_authenticated_api(config):
         log.info("  Session token expired (401), attempting refresh...")
         new_token = _refresh_session(config)
         if new_token:
-            resp2 = requests.get(user_url, headers={"Authorization": f"Bearer {new_token}"}, timeout=10)
+            resp2 = sess.get(user_url, headers={"Authorization": f"Bearer {new_token}"}, timeout=5)
             if resp2.status_code == 200:
                 user = resp2.json()
                 log.info("  PASS: authenticated after refresh as %s (id: %s)", user.get("email", "?"), user.get("id", "?"))
@@ -217,9 +221,11 @@ def _refresh_session(config):
     api_host = config["api_host"]
     refresh_token = config["refresh_token"]
 
+    sess = requests.Session()
+    sess.mount("https://", requests.adapters.HTTPAdapter(max_retries=0))
     try:
         # Fetch Cognito config from public endpoint
-        resp = requests.get(f"{api_host}/authentication/cognito-config", timeout=10)
+        resp = sess.get(f"{api_host}/authentication/cognito-config", timeout=5)
         if resp.status_code != 200:
             log.error("  Failed to fetch cognito config: %d", resp.status_code)
             return None
@@ -242,7 +248,7 @@ def _refresh_session(config):
             "ClientId": app_client_id,
             "AuthParameters": {"REFRESH_TOKEN": refresh_token},
         })
-        resp = requests.post(cognito_url, headers=headers, data=body, timeout=15)
+        resp = sess.post(cognito_url, headers=headers, data=body, timeout=5)
         if resp.status_code != 200:
             log.error("  Cognito refresh failed: %d %s", resp.status_code, resp.text[:200])
             return None
