@@ -140,7 +140,7 @@ def test_internet_access(config):
     try:
         sess = requests.Session()
         sess.mount("https://", requests.adapters.HTTPAdapter(max_retries=0))
-        resp = sess.get("https://api.pennsieve.net/health", timeout=2)
+        resp = sess.get("https://api.pennsieve.net/health", timeout=1)
         http_ok = resp.status_code < 500
         log.info("  HTTP request: PASS (status %d)", resp.status_code)
     except requests.RequestException as e:
@@ -187,7 +187,7 @@ def test_authenticated_api(config):
     sess = requests.Session()
     sess.mount("https://", requests.adapters.HTTPAdapter(max_retries=0))
     try:
-        resp = sess.get(user_url, headers={"Authorization": f"Bearer {session_token}"}, timeout=5)
+        resp = sess.get(user_url, headers={"Authorization": f"Bearer {session_token}"}, timeout=2)
     except requests.RequestException as e:
         log.info("  API request failed (network): %s", e)
         log.info("  This is expected if the processor has no internet access (compliant mode)")
@@ -202,7 +202,7 @@ def test_authenticated_api(config):
         log.info("  Session token expired (401), attempting refresh...")
         new_token = _refresh_session(config)
         if new_token:
-            resp2 = sess.get(user_url, headers={"Authorization": f"Bearer {new_token}"}, timeout=5)
+            resp2 = sess.get(user_url, headers={"Authorization": f"Bearer {new_token}"}, timeout=2)
             if resp2.status_code == 200:
                 user = resp2.json()
                 log.info("  PASS: authenticated after refresh as %s (id: %s)", user.get("email", "?"), user.get("id", "?"))
@@ -225,7 +225,7 @@ def _refresh_session(config):
     sess.mount("https://", requests.adapters.HTTPAdapter(max_retries=0))
     try:
         # Fetch Cognito config from public endpoint
-        resp = sess.get(f"{api_host}/authentication/cognito-config", timeout=5)
+        resp = sess.get(f"{api_host}/authentication/cognito-config", timeout=2)
         if resp.status_code != 200:
             log.error("  Failed to fetch cognito config: %d", resp.status_code)
             return None
@@ -248,7 +248,7 @@ def _refresh_session(config):
             "ClientId": app_client_id,
             "AuthParameters": {"REFRESH_TOKEN": refresh_token},
         })
-        resp = sess.post(cognito_url, headers=headers, data=body, timeout=5)
+        resp = sess.post(cognito_url, headers=headers, data=body, timeout=2)
         if resp.status_code != 200:
             log.error("  Cognito refresh failed: %d %s", resp.status_code, resp.text[:200])
             return None
