@@ -23,8 +23,12 @@ logging.basicConfig(
 )
 log = logging.getLogger("processor-test")
 
-# Unique ID for this processor run to avoid symlink name collisions in merges
-PROCESSOR_RUN_ID = uuid.uuid4().hex[:8]
+# Generate a unique ID per invocation (not at module level) to avoid symlink
+# name collisions in merges.  In Lambda, module-level code only runs once per
+# container, so a warm-start reuse would produce the same ID for a second
+# invocation, causing merge collisions in diamond DAGs.
+def _new_run_id():
+    return uuid.uuid4().hex[:8]
 
 
 def get_config():
@@ -309,6 +313,8 @@ def test_symlink_creation(config):
 
 def run():
     """Run all tests and report summary."""
+    global PROCESSOR_RUN_ID
+    PROCESSOR_RUN_ID = _new_run_id()
     start = time.time()
     log.info("=" * 60)
     log.info("Processor Test - Dual Mode Validation")
