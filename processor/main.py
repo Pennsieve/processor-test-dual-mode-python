@@ -43,6 +43,8 @@ def get_config():
     environment = os.environ.get("ENVIRONMENT", "unknown")
     region = os.environ.get("REGION", "unknown")
     deployment_mode = os.environ.get("DEPLOYMENT_MODE", "")
+    test_shared_secret = os.environ.get("TEST_SHARED_SECRET", "")
+    test_user_secret = os.environ.get("TEST_USER_SECRET", "")
 
     return {
         "input_dir": input_dir,
@@ -55,6 +57,8 @@ def get_config():
         "environment": environment,
         "region": region,
         "deployment_mode": deployment_mode,
+        "test_shared_secret": test_shared_secret,
+        "test_user_secret": test_user_secret,
     }
 
 
@@ -266,6 +270,25 @@ def _refresh_session(config):
         return None
 
 
+def test_secrets(config):
+    """Check if shared and user secrets are injected as env vars."""
+    log.info("=== TEST: Secrets Injection ===")
+    shared = config["test_shared_secret"]
+    user = config["test_user_secret"]
+
+    if shared:
+        log.info("  TEST_SHARED_SECRET: present (value=%s)", shared)
+    else:
+        log.warning("  TEST_SHARED_SECRET: NOT present")
+
+    if user:
+        log.info("  TEST_USER_SECRET: present (value=%s)", user)
+    else:
+        log.warning("  TEST_USER_SECRET: NOT present")
+
+    return bool(shared), bool(user)
+
+
 def test_symlink_creation(config):
     """
     Create uniquely-named symlinks in OUTPUT_DIR for each file in INPUT_DIR.
@@ -331,6 +354,7 @@ def run():
     input_ok, output_ok = test_directories(config)
     dns_ok, http_ok, internet_valid = test_internet_access(config)
     auth_result = test_authenticated_api(config)
+    shared_ok, user_ok = test_secrets(config)
     symlinks = test_symlink_creation(config)
 
     # Summary
@@ -345,6 +369,8 @@ def run():
     log.info("  HTTP connectivity: %s", http_ok)
     log.info("  Internet validation: %s", "PASS" if internet_valid else "FAIL")
     log.info("  Authenticated API: %s", {True: "PASS", False: "FAIL", None: "SKIP"}.get(auth_result, "UNKNOWN"))
+    log.info("  Shared secret (TEST_SHARED_SECRET): %s", "PASS" if shared_ok else "NOT FOUND")
+    log.info("  User secret (TEST_USER_SECRET): %s", "PASS" if user_ok else "NOT FOUND")
     log.info("  Symlinks created: %d", len(symlinks))
     log.info("  Elapsed: %.2fs", elapsed)
     log.info("=" * 60)
