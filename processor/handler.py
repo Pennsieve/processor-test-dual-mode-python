@@ -27,6 +27,15 @@ def handler(event, context):
     os.environ["SESSION_TOKEN"] = event.get("sessionToken", "")
     os.environ["REFRESH_TOKEN"] = event.get("refreshToken", "")
 
+    # Bridge any additional keys (e.g. injected secrets) to env vars.
+    # Keys that are already handled above or are non-string are skipped.
+    _known_keys = {"inputDir", "outputDir", "integrationId", "sessionToken",
+                   "refreshToken", "computeNodeId", "executionRunId",
+                   "llmGovernorFunction"}
+    for key, value in event.items():
+        if key not in _known_keys and isinstance(value, str):
+            os.environ[key] = value
+
     # Run the same logic as ECS mode
     from processor.main import run
     run()
